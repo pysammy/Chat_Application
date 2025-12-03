@@ -180,8 +180,9 @@ button {
 .user-row {
   width: 100%;
   display: flex;
-  gap: 12px;
+  justify-content: space-between;
   align-items: center;
+  gap: 12px;
   text-align: left;
   padding: 12px 14px;
   border-radius: 14px;
@@ -199,6 +200,12 @@ button {
 .user-row.active {
   border-color: var(--accent);
   box-shadow: 0 14px 30px rgba(91, 109, 255, 0.18);
+}
+
+.user-info {
+  display: flex;
+  gap: 12px;
+  align-items: center;
 }
 
 .avatar {
@@ -249,6 +256,31 @@ button {
 .user-email {
   color: var(--ink-soft);
   font-size: 0.9rem;
+}
+
+.user-trail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  min-width: 56px;
+}
+
+.user-trail .time {
+  font-size: 0.88rem;
+  color: var(--ink-soft);
+}
+
+.badge {
+  background: #16a34a;
+  color: #fff;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.78rem;
+  min-width: 28px;
+  text-align: center;
+  box-shadow: 0 5px 12px rgba(22, 163, 74, 0.22);
 }
 
 .chat-pane {
@@ -381,6 +413,12 @@ button {
   border-radius: 12px;
   color: var(--ink-soft);
   background: #f8fafc;
+}
+
+.file-input.icon-only {
+  width: 44px;
+  padding: 10px;
+  font-size: 18px;
 }
 
 .composer input[type="text"],
