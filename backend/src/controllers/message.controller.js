@@ -1,6 +1,7 @@
 import User from "../models/user.model.js";
 import Message from "../models/message.model.js";
 import cloudinary from "../lib/cloudinary.js";  
+import { getIO, getReceiverSocketId } from "../lib/socket.js";
 
 export const getUsersForSideBar = async (req, res, next) => {
   try {
@@ -26,7 +27,7 @@ export const getmessages = async (req, res, next) => {
         { senderId: myId, receiverId: userToChatId },
         { senderId: userToChatId, receiverId: myId },
       ],
-    });
+    }).sort({ createdAt: 1 });
 
     res.status(200).json(messages);
   } catch (error) {
@@ -55,6 +56,18 @@ export const sendMessage = async (req, res, next) => {
     });
 
     await newMessage.save();
+
+    const receiverSocketId = getReceiverSocketId(receiverId);
+    const io = getIO();
+
+    if (receiverSocketId && io) {
+      io.to(receiverSocketId).emit("message:new", newMessage);
+    }
+
+    const senderSocketId = getReceiverSocketId(senderId);
+    if (senderSocketId && io) {
+      io.to(senderSocketId).emit("message:new", newMessage);
+    }
 
     res.status(201).json(newMessage);
   } catch (error) {
