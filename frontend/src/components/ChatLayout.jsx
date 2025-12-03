@@ -16,13 +16,16 @@ const Sidebar = ({ users, selectedUserId, onSelect, online }) => (
       {users.map((u) => {
         const isActive = selectedUserId === u._id;
         const isOnline = online.has(u._id);
+        const initial = u.fullName?.[0]?.toUpperCase() || "?";
         return (
           <button
             key={u._id}
             className={`user-row ${isActive ? "active" : ""}`}
             onClick={() => onSelect(u)}
           >
-            <div className="avatar">{u.fullName?.[0]?.toUpperCase()}</div>
+            <div className="avatar">
+              {u.profilePic ? <img src={u.profilePic} alt={u.fullName} /> : initial}
+            </div>
             <div className="user-meta">
               <div className="user-name">
                 {u.fullName}
@@ -40,25 +43,31 @@ const Sidebar = ({ users, selectedUserId, onSelect, online }) => (
   </aside>
 );
 
-const MessageList = ({ messages, currentUser }) => (
-  <div className="messages">
-    <div className="messages-inner">
-      {messages.map((msg) => {
-        const isMine = msg.senderId === currentUser._id;
-        return (
-          <div key={msg._id} className={`message ${isMine ? "mine" : ""}`}>
-            <div className="bubble">
-              {msg.text && <p>{msg.text}</p>}
-              {msg.image && <img src={msg.image} alt="attachment" />}
-            </div>
-            <span className="timestamp">{formatTime(msg.createdAt || msg.timestamp)}</span>
-          </div>
-        );
-      })}
-      {messages.length === 0 && <div className="empty">No messages yet. Say hello!</div>}
+const MessageList = ({ messages, currentUser }) => {
+  const isEmpty = messages.length === 0;
+  return (
+    <div className={`messages ${isEmpty ? "empty-state" : ""}`}>
+      <div className="messages-inner">
+        {isEmpty ? (
+          <div className="empty centered">No messages yet. Say hello!</div>
+        ) : (
+          messages.map((msg) => {
+            const isMine = msg.senderId === currentUser._id;
+            return (
+              <div key={msg._id} className={`message ${isMine ? "mine" : ""}`}>
+                <div className="bubble">
+                  {msg.text && <p>{msg.text}</p>}
+                  {msg.image && <img src={msg.image} alt="attachment" />}
+                </div>
+                <span className="timestamp">{formatTime(msg.createdAt || msg.timestamp)}</span>
+              </div>
+            );
+          })
+        )}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 const MessageInput = ({ onSend, disabled }) => {
   const [text, setText] = useState("");
@@ -212,8 +221,16 @@ const ChatLayout = ({ user, socket, onLogout }) => {
       />
       <main className="chat-pane">
         <header className="chat-header">
-          <div>
-            <p className="eyebrow">Chatting as {user.fullName}</p>
+          <div className="chat-title">
+            {selectedUser && (
+              <div className="avatar large">
+                {selectedUser.profilePic ? (
+                  <img src={selectedUser.profilePic} alt={selectedUser.fullName} />
+                ) : (
+                  selectedUser.fullName?.[0]?.toUpperCase()
+                )}
+              </div>
+            )}
             <h2>{pageTitle}</h2>
           </div>
           <button onClick={onLogout} className="ghost small">

@@ -75,7 +75,6 @@ const AuthPanel = ({ onLogin, onSignup }) => {
               type="password"
               value={form.password}
               onChange={handleChange}
-              placeholder="••••••"
               required
             />
           </label>
