@@ -16,19 +16,32 @@ const Sidebar = ({ users, selectedUserId, onSelect, online }) => (
       {users.map((u) => {
         const isActive = selectedUserId === u._id;
         const isOnline = online.has(u._id);
+        const initial = u.fullName?.[0]?.toUpperCase() || "?";
+        const timeStr = u.meta?.lastMessageTime
+          ? formatTime(u.meta.lastMessageTime)
+          : "";
+        const unread = u.meta?.unreadCount || 0;
         return (
           <button
             key={u._id}
             className={`user-row ${isActive ? "active" : ""}`}
             onClick={() => onSelect(u)}
           >
-            <div className="avatar">{u.fullName?.[0]?.toUpperCase()}</div>
-            <div className="user-meta">
-              <div className="user-name">
-                {u.fullName}
-                {isOnline && <span className="status-dot" title="Online" />}
+            <div className="user-info">
+              <div className="avatar">
+                {u.profilePic ? <img src={u.profilePic} alt={u.fullName} /> : initial}
               </div>
-              <div className="user-email">{u.email}</div>
+              <div className="user-meta">
+                <div className="user-name">
+                  {u.fullName}
+                  {isOnline && <span className="status-dot" title="Online" />}
+                </div>
+                <div className="user-email">{u.email}</div>
+              </div>
+            </div>
+            <div className="user-trail">
+              {timeStr && <span className="time">{timeStr}</span>}
+              {unread > 0 && <span className="badge">{unread}</span>}
             </div>
           </button>
         );
@@ -40,25 +53,31 @@ const Sidebar = ({ users, selectedUserId, onSelect, online }) => (
   </aside>
 );
 
-const MessageList = ({ messages, currentUser }) => (
-  <div className="messages">
-    <div className="messages-inner">
-      {messages.map((msg) => {
-        const isMine = msg.senderId === currentUser._id;
-        return (
-          <div key={msg._id} className={`message ${isMine ? "mine" : ""}`}>
-            <div className="bubble">
-              {msg.text && <p>{msg.text}</p>}
-              {msg.image && <img src={msg.image} alt="attachment" />}
-            </div>
-            <span className="timestamp">{formatTime(msg.createdAt || msg.timestamp)}</span>
-          </div>
-        );
-      })}
-      {messages.length === 0 && <div className="empty">No messages yet. Say hello!</div>}
+const MessageList = ({ messages, currentUser }) => {
+  const isEmpty = messages.length === 0;
+  return (
+    <div className={`messages ${isEmpty ? "empty-state" : ""}`}>
+      <div className="messages-inner">
+        {isEmpty ? (
+          <div className="empty centered">No messages yet. Say hello!</div>
+        ) : (
+          messages.map((msg) => {
+            const isMine = msg.senderId === currentUser._id;
+            return (
+              <div key={msg._id} className={`message ${isMine ? "mine" : ""}`}>
+                <div className="bubble">
+                  {msg.text && <p>{msg.text}</p>}
+                  {msg.image && <img src={msg.image} alt="attachment" />}
+                </div>
+                <span className="timestamp">{formatTime(msg.createdAt || msg.timestamp)}</span>
+              </div>
+            );
+          })
+        )}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 const MessageInput = ({ onSend, disabled }) => {
   const [text, setText] = useState("");
@@ -87,9 +106,9 @@ const MessageInput = ({ onSend, disabled }) => {
 
   return (
     <form className="composer" onSubmit={handleSubmit}>
-      <label className="file-input">
+      <label className="file-input icon-only" title="Attach image">
         <input type="file" accept="image/*" onChange={handleFile} disabled={disabled} />
-        <span>{uploading ? "Uploading..." : "Add image"}</span>
+        <span>{uploading ? "..." : "📎"}</span>
       </label>
       <input
         placeholder="Write a message"
@@ -112,6 +131,7 @@ const ChatLayout = ({ user, socket, onLogout }) => {
   const [sending, setSending] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [error, setError] = useState("");
+  const [messageMeta, setMessageMeta] = useState({});
 
   const addMessage = useCallback((message) => {
     setMessages((prev) => {
@@ -145,6 +165,15 @@ const ChatLayout = ({ user, socket, onLogout }) => {
       try {
         const data = await messageApi.getMessages(partnerId);
         setMessages(data);
+        const lastMsg = data[data.length - 1];
+        setMessageMeta((prev) => ({
+          ...prev,
+          [partnerId]: {
+            lastMessageTime:
+              lastMsg?.createdAt || lastMsg?.timestamp || prev[partnerId]?.lastMessageTime,
+            unreadCount: 0,
+          },
+        }));
       } catch (err) {
         setError(err?.message || "Failed to load messages");
       } finally {
@@ -165,6 +194,13 @@ const ChatLayout = ({ user, socket, onLogout }) => {
     try {
       const newMessage = await messageApi.sendMessage(selectedUser._id, { text, image });
       addMessage(newMessage);
+      setMessageMeta((prev) => ({
+        ...prev,
+        [selectedUser._id]: {
+          lastMessageTime: newMessage?.createdAt || prev[selectedUser._id]?.lastMessageTime,
+          unreadCount: prev[selectedUser._id]?.unreadCount || 0,
+        },
+      }));
     } catch (err) {
       setError(err?.message || "Failed to send message");
     } finally {
@@ -180,6 +216,27 @@ const ChatLayout = ({ user, socket, onLogout }) => {
         message.senderId === selectedUser?._id || message.receiverId === selectedUser?._id;
       if (relevant) {
         addMessage(message);
+        setMessageMeta((prev) => ({
+          ...prev,
+          [selectedUser._id]: {
+            lastMessageTime:
+              message?.createdAt || message?.timestamp || prev[selectedUser._id]?.lastMessageTime,
+            unreadCount: 0,
+          },
+        }));
+      } else {
+        const otherId = message.senderId === user._id ? message.receiverId : message.senderId;
+        const shouldCountUnread = message.receiverId === user._id;
+        setMessageMeta((prev) => ({
+          ...prev,
+          [otherId]: {
+            lastMessageTime:
+              message?.createdAt || message?.timestamp || prev[otherId]?.lastMessageTime,
+            unreadCount: shouldCountUnread
+              ? (prev[otherId]?.unreadCount || 0) + 1
+              : prev[otherId]?.unreadCount || 0,
+          },
+        }));
       }
     };
 
@@ -205,15 +262,23 @@ const ChatLayout = ({ user, socket, onLogout }) => {
   return (
     <div className="chat-shell">
       <Sidebar
-        users={users}
+        users={users.map((u) => ({ ...u, meta: messageMeta[u._id] || u.meta || {} }))}
         selectedUserId={selectedUser?._id}
         onSelect={setSelectedUser}
         online={onlineUsers}
       />
       <main className="chat-pane">
         <header className="chat-header">
-          <div>
-            <p className="eyebrow">Chatting as {user.fullName}</p>
+          <div className="chat-title">
+            {selectedUser && (
+              <div className="avatar large">
+                {selectedUser.profilePic ? (
+                  <img src={selectedUser.profilePic} alt={selectedUser.fullName} />
+                ) : (
+                  selectedUser.fullName?.[0]?.toUpperCase()
+                )}
+              </div>
+            )}
             <h2>{pageTitle}</h2>
           </div>
           <button onClick={onLogout} className="ghost small">
