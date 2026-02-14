@@ -1,9 +1,20 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { messageApi } from "../api";
 
 const formatTime = (dateString) => {
   const date = new Date(dateString);
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+};
+
+const normalizeId = (value) => {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "object") {
+    if (typeof value._id === "string") return value._id;
+    if (typeof value.$oid === "string") return value.$oid;
+    if (typeof value.toString === "function") return value.toString();
+  }
+  return String(value);
 };
 
 const Sidebar = ({ users, selectedUserId, onSelect, online }) => (
@@ -14,8 +25,9 @@ const Sidebar = ({ users, selectedUserId, onSelect, online }) => (
     </div>
     <div className="user-list">
       {users.map((u) => {
-        const isActive = selectedUserId === u._id;
-        const isOnline = online.has(u._id);
+        const userId = normalizeId(u._id);
+        const isActive = selectedUserId === userId;
+        const isOnline = online.has(userId);
         const initial = u.fullName?.[0]?.toUpperCase() || "?";
         const timeStr = u.meta?.lastMessageTime
           ? formatTime(u.meta.lastMessageTime)
@@ -23,7 +35,7 @@ const Sidebar = ({ users, selectedUserId, onSelect, online }) => (
         const unread = u.meta?.unreadCount || 0;
         return (
           <button
-            key={u._id}
+            key={userId}
             className={`user-row ${isActive ? "active" : ""}`}
             onClick={() => onSelect(u)}
           >
@@ -33,7 +45,7 @@ const Sidebar = ({ users, selectedUserId, onSelect, online }) => (
               </div>
               <div className="user-meta">
                 <div className="user-name">
-                  {u.fullName}
+                  <span className="user-name-text">{u.fullName}</span>
                   {isOnline && <span className="status-dot" title="Online" />}
                 </div>
                 <div className="user-email">{u.email}</div>
@@ -53,8 +65,9 @@ const Sidebar = ({ users, selectedUserId, onSelect, online }) => (
   </aside>
 );
 
-const MessageList = ({ messages, currentUser }) => {
+const MessageList = ({ messages, currentUser, bottomRef }) => {
   const isEmpty = messages.length === 0;
+  const currentUserId = normalizeId(currentUser?._id);
   return (
     <div className={`messages ${isEmpty ? "empty-state" : ""}`}>
       <div className="messages-inner">
@@ -62,7 +75,7 @@ const MessageList = ({ messages, currentUser }) => {
           <div className="empty centered">No messages yet. Say hello!</div>
         ) : (
           messages.map((msg) => {
-            const isMine = msg.senderId === currentUser._id;
+            const isMine = normalizeId(msg.senderId) === currentUserId;
             return (
               <div key={msg._id} className={`message ${isMine ? "mine" : ""}`}>
                 <div className="bubble">
@@ -74,6 +87,7 @@ const MessageList = ({ messages, currentUser }) => {
             );
           })
         )}
+        <div ref={bottomRef} />
       </div>
     </div>
   );
@@ -132,10 +146,17 @@ const ChatLayout = ({ user, socket, onLogout }) => {
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [error, setError] = useState("");
   const [messageMeta, setMessageMeta] = useState({});
+  const shouldAutoScrollRef = useRef(false);
+  const bottomRef = useRef(null);
+
+  const scrollToBottom = useCallback((behavior = "smooth") => {
+    bottomRef.current?.scrollIntoView({ behavior, block: "end" });
+  }, []);
 
   const addMessage = useCallback((message) => {
     setMessages((prev) => {
-      if (message?._id && prev.some((m) => m._id === message._id)) {
+      const newMessageId = normalizeId(message?._id);
+      if (newMessageId && prev.some((m) => normalizeId(m?._id) === newMessageId)) {
         return prev;
       }
       return [...prev, message];
@@ -166,14 +187,16 @@ const ChatLayout = ({ user, socket, onLogout }) => {
         const data = await messageApi.getMessages(partnerId);
         setMessages(data);
         const lastMsg = data[data.length - 1];
+        const partnerKey = normalizeId(partnerId);
         setMessageMeta((prev) => ({
           ...prev,
-          [partnerId]: {
+          [partnerKey]: {
             lastMessageTime:
-              lastMsg?.createdAt || lastMsg?.timestamp || prev[partnerId]?.lastMessageTime,
+              lastMsg?.createdAt || lastMsg?.timestamp || prev[partnerKey]?.lastMessageTime,
             unreadCount: 0,
           },
         }));
+        shouldAutoScrollRef.current = true;
       } catch (err) {
         setError(err?.message || "Failed to load messages");
       } finally {
@@ -192,13 +215,15 @@ const ChatLayout = ({ user, socket, onLogout }) => {
     if (!selectedUser) return;
     setSending(true);
     try {
-      const newMessage = await messageApi.sendMessage(selectedUser._id, { text, image });
+      const selectedId = normalizeId(selectedUser._id);
+      const newMessage = await messageApi.sendMessage(selectedId, { text, image });
       addMessage(newMessage);
+      shouldAutoScrollRef.current = true;
       setMessageMeta((prev) => ({
         ...prev,
-        [selectedUser._id]: {
-          lastMessageTime: newMessage?.createdAt || prev[selectedUser._id]?.lastMessageTime,
-          unreadCount: prev[selectedUser._id]?.unreadCount || 0,
+        [selectedId]: {
+          lastMessageTime: newMessage?.createdAt || prev[selectedId]?.lastMessageTime,
+          unreadCount: prev[selectedId]?.unreadCount || 0,
         },
       }));
     } catch (err) {
@@ -212,21 +237,30 @@ const ChatLayout = ({ user, socket, onLogout }) => {
     if (!socket) return;
 
     const handleIncoming = (message) => {
+      const myId = normalizeId(user?._id);
+      const selectedId = normalizeId(selectedUser?._id);
+      const senderId = normalizeId(message?.senderId);
+      const receiverId = normalizeId(message?.receiverId);
       const relevant =
-        message.senderId === selectedUser?._id || message.receiverId === selectedUser?._id;
+        selectedId &&
+        ((senderId === selectedId && receiverId === myId) ||
+          (senderId === myId && receiverId === selectedId));
       if (relevant) {
         addMessage(message);
+        shouldAutoScrollRef.current = true;
         setMessageMeta((prev) => ({
           ...prev,
-          [selectedUser._id]: {
+          [selectedId]: {
             lastMessageTime:
-              message?.createdAt || message?.timestamp || prev[selectedUser._id]?.lastMessageTime,
+              message?.createdAt || message?.timestamp || prev[selectedId]?.lastMessageTime,
             unreadCount: 0,
           },
         }));
       } else {
-        const otherId = message.senderId === user._id ? message.receiverId : message.senderId;
-        const shouldCountUnread = message.receiverId === user._id;
+        const otherId = senderId === myId ? receiverId : senderId;
+        const shouldCountUnread = receiverId === myId;
+        if (!otherId) return;
+
         setMessageMeta((prev) => ({
           ...prev,
           [otherId]: {
@@ -240,7 +274,8 @@ const ChatLayout = ({ user, socket, onLogout }) => {
       }
     };
 
-    const handleOnline = (ids) => setOnlineUsers(new Set(ids));
+    const handleOnline = (ids = []) =>
+      setOnlineUsers(new Set(ids.map((id) => normalizeId(id))));
 
     socket.on("message:new", handleIncoming);
     socket.on("users:online", handleOnline);
@@ -252,7 +287,27 @@ const ChatLayout = ({ user, socket, onLogout }) => {
       socket.off("message:new", handleIncoming);
       socket.off("users:online", handleOnline);
     };
-  }, [socket, selectedUser, addMessage]);
+  }, [socket, selectedUser, addMessage, user]);
+
+  useEffect(() => {
+    if (!selectedUser) return;
+    if (!shouldAutoScrollRef.current) return;
+    scrollToBottom();
+    shouldAutoScrollRef.current = false;
+  }, [messages, selectedUser, scrollToBottom]);
+
+  const handleSelectUser = useCallback((nextUser) => {
+    const nextId = normalizeId(nextUser?._id);
+    setSelectedUser(nextUser);
+    setMessageMeta((prev) => ({
+      ...prev,
+      [nextId]: {
+        ...prev[nextId],
+        unreadCount: 0,
+      },
+    }));
+    shouldAutoScrollRef.current = true;
+  }, []);
 
   const pageTitle = useMemo(() => {
     if (!selectedUser) return "Select a conversation";
@@ -262,9 +317,12 @@ const ChatLayout = ({ user, socket, onLogout }) => {
   return (
     <div className="chat-shell">
       <Sidebar
-        users={users.map((u) => ({ ...u, meta: messageMeta[u._id] || u.meta || {} }))}
-        selectedUserId={selectedUser?._id}
-        onSelect={setSelectedUser}
+        users={users.map((u) => {
+          const userId = normalizeId(u._id);
+          return { ...u, meta: messageMeta[userId] || u.meta || {} };
+        })}
+        selectedUserId={normalizeId(selectedUser?._id)}
+        onSelect={handleSelectUser}
         online={onlineUsers}
       />
       <main className="chat-pane">
@@ -290,7 +348,7 @@ const ChatLayout = ({ user, socket, onLogout }) => {
           {loadingMessages ? (
             <div className="empty">Loading messages...</div>
           ) : (
-            <MessageList messages={messages} currentUser={user} />
+            <MessageList messages={messages} currentUser={user} bottomRef={bottomRef} />
           )}
         </div>
         <MessageInput onSend={handleSend} disabled={!selectedUser || sending} />
