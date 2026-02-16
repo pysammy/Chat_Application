@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import EmojiPicker from "emoji-picker-react";
 import { messageApi } from "../api";
 
 const formatTime = (dateString) => {
+  if (!dateString) return "";
   const date = new Date(dateString);
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 };
@@ -17,21 +19,53 @@ const normalizeId = (value) => {
   return String(value);
 };
 
-const Sidebar = ({ users, selectedUserId, onSelect, online }) => (
+const getMessagePreview = (message) => {
+  if (message?.text?.trim()) return message.text.trim();
+  if (message?.image) return "Photo";
+  return "Message";
+};
+
+const Sidebar = ({
+  users,
+  selectedUserId,
+  onSelect,
+  online,
+  globalSearchQuery,
+  onGlobalSearchChange,
+  globalSearchResults,
+  globalSearchLoading,
+  onOpenGlobalResult,
+  usersById,
+}) => (
   <aside className="sidebar">
     <div className="sidebar-header">
       <h2>Chats</h2>
       <p>Select a person to start messaging.</p>
     </div>
+    <div className="sidebar-search">
+      <input
+        type="text"
+        value={globalSearchQuery}
+        onChange={(e) => onGlobalSearchChange(e.target.value)}
+        placeholder="Search all messages"
+      />
+    </div>
+    {globalSearchQuery.trim() && (
+      <GlobalSearchResults
+        results={globalSearchResults}
+        usersById={usersById}
+        loading={globalSearchLoading}
+        onOpenResult={onOpenGlobalResult}
+        compact
+      />
+    )}
     <div className="user-list">
       {users.map((u) => {
         const userId = normalizeId(u._id);
         const isActive = selectedUserId === userId;
         const isOnline = online.has(userId);
         const initial = u.fullName?.[0]?.toUpperCase() || "?";
-        const timeStr = u.meta?.lastMessageTime
-          ? formatTime(u.meta.lastMessageTime)
-          : "";
+        const timeStr = u.meta?.lastMessageTime ? formatTime(u.meta.lastMessageTime) : "";
         const unread = u.meta?.unreadCount || 0;
         return (
           <button
@@ -65,9 +99,19 @@ const Sidebar = ({ users, selectedUserId, onSelect, online }) => (
   </aside>
 );
 
-const MessageList = ({ messages, currentUser, bottomRef }) => {
+const MessageList = ({
+  messages,
+  currentUser,
+  bottomRef,
+  openActionMenuId,
+  onToggleMenu,
+  onReply,
+  onDelete,
+  onCopy,
+}) => {
   const isEmpty = messages.length === 0;
   const currentUserId = normalizeId(currentUser?._id);
+
   return (
     <div className={`messages ${isEmpty ? "empty-state" : ""}`}>
       <div className="messages-inner">
@@ -75,10 +119,56 @@ const MessageList = ({ messages, currentUser, bottomRef }) => {
           <div className="empty centered">No messages yet. Say hello!</div>
         ) : (
           messages.map((msg) => {
+            const messageId = normalizeId(msg?._id);
             const isMine = normalizeId(msg.senderId) === currentUserId;
+            const isMenuOpen = openActionMenuId === messageId;
+            const replySenderId = normalizeId(msg?.replyTo?.senderId);
+            const replyLabel = replySenderId === currentUserId ? "You" : "Reply";
+
             return (
-              <div key={msg._id} className={`message ${isMine ? "mine" : ""}`}>
+              <div
+                key={messageId}
+                className={`message ${isMine ? "mine" : ""} ${isMenuOpen ? "menu-open" : ""}`}
+              >
+                <div className="message-actions" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    className="message-menu-trigger"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleMenu(messageId);
+                    }}
+                    aria-label="Message options"
+                  >
+                    ⋮
+                  </button>
+                  {isMenuOpen && (
+                    <div className="message-action-menu">
+                      <button type="button" onClick={() => onReply(msg)}>
+                        Reply
+                      </button>
+                      <button type="button" onClick={() => onCopy(msg)}>
+                        Copy
+                      </button>
+                      {isMine && (
+                        <button type="button" onClick={() => onDelete(msg, "everyone")}>
+                          Delete for everyone
+                        </button>
+                      )}
+                      <button type="button" onClick={() => onDelete(msg, "me")}>
+                        Delete for me
+                      </button>
+                    </div>
+                  )}
+                </div>
+
                 <div className="bubble">
+                  {msg?.replyTo?.messageId && (
+                    <div className="reply-preview">
+                      <span className="reply-author">{replyLabel}</span>
+                      <span className="reply-text">{getMessagePreview(msg.replyTo)}</span>
+                    </div>
+                  )}
                   {msg.text && <p>{msg.text}</p>}
                   {msg.image && <img src={msg.image} alt="attachment" />}
                 </div>
@@ -93,10 +183,49 @@ const MessageList = ({ messages, currentUser, bottomRef }) => {
   );
 };
 
-const MessageInput = ({ onSend, disabled }) => {
+const GlobalSearchResults = ({ results, usersById, loading, onOpenResult, compact = false }) => {
+  if (loading) {
+    return <div className="empty">Searching messages...</div>;
+  }
+
+  if (results.length === 0) {
+    return <div className="empty">No matching messages found.</div>;
+  }
+
+  return (
+    <div className={`global-search-results ${compact ? "compact" : ""}`}>
+      {results.map((result) => {
+        const convoId = normalizeId(result.conversationUserId);
+        const user = usersById[convoId];
+        const name = user?.fullName || "Unknown user";
+        const preview = getMessagePreview(result);
+        return (
+          <button
+            key={normalizeId(result._id)}
+            className={`global-result-row ${compact ? "compact" : ""}`}
+            onClick={() => onOpenResult(result)}
+          >
+            <div className="global-result-main">
+              <span className="global-result-name">{name}</span>
+              <span className="global-result-text">{preview}</span>
+            </div>
+            <span className="global-result-time">{formatTime(result.createdAt)}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
+const MessageInput = ({ onSend, disabled, replyingTo, currentUserId, onCancelReply }) => {
   const [text, setText] = useState("");
   const [imageData, setImageData] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const textInputRef = useRef(null);
+  const emojiPickerRef = useRef(null);
+
+  const isReplyToMine = normalizeId(replyingTo?.senderId) === normalizeId(currentUserId);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -104,6 +233,7 @@ const MessageInput = ({ onSend, disabled }) => {
     await onSend({ text, image: imageData });
     setText("");
     setImageData("");
+    setShowEmojiPicker(false);
   };
 
   const handleFile = (e) => {
@@ -118,21 +248,89 @@ const MessageInput = ({ onSend, disabled }) => {
     reader.readAsDataURL(file);
   };
 
+  const handleEmojiSelect = (emojiData) => {
+    setText((prev) => `${prev}${emojiData?.emoji || ""}`);
+    textInputRef.current?.focus();
+  };
+
+  useEffect(() => {
+    if (!showEmojiPicker) return;
+
+    const handleOutsideClick = (event) => {
+      if (!emojiPickerRef.current?.contains(event.target)) {
+        setShowEmojiPicker(false);
+      }
+    };
+
+    const handleEscape = (event) => {
+      if (event.key === "Escape") {
+        setShowEmojiPicker(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handleOutsideClick);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("mousedown", handleOutsideClick);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [showEmojiPicker]);
+
   return (
     <form className="composer" onSubmit={handleSubmit}>
-      <label className="file-input icon-only" title="Attach image">
-        <input type="file" accept="image/*" onChange={handleFile} disabled={disabled} />
-        <span>{uploading ? "..." : "📎"}</span>
-      </label>
-      <input
-        placeholder="Write a message"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        disabled={disabled}
-      />
-      <button type="submit" className="primary" disabled={disabled || uploading}>
-        Send
-      </button>
+      {replyingTo && (
+        <div className="composer-reply">
+          <div className="composer-reply-content">
+            <span className="composer-reply-label">Replying to {isReplyToMine ? "yourself" : "message"}</span>
+            <span className="composer-reply-text">{getMessagePreview(replyingTo)}</span>
+          </div>
+          <button type="button" className="composer-reply-cancel" onClick={onCancelReply}>
+            ✕
+          </button>
+        </div>
+      )}
+
+      <div className="composer-row">
+        <label className="file-input icon-only" title="Attach image">
+          <input type="file" accept="image/*" onChange={handleFile} disabled={disabled} />
+          <span>{uploading ? "..." : "📎"}</span>
+        </label>
+        <div className="composer-input-wrap">
+          <input
+            type="text"
+            ref={textInputRef}
+            placeholder="Write a message"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            disabled={disabled}
+          />
+          <div className="emoji-picker-wrap" ref={emojiPickerRef}>
+            <button
+              type="button"
+              className="emoji-trigger icon-only"
+              title="Open emoji picker"
+              aria-label="Open emoji picker"
+              onClick={() => setShowEmojiPicker((prev) => !prev)}
+              disabled={disabled}
+            >
+              😊
+            </button>
+            {showEmojiPicker && (
+              <div className="emoji-panel">
+                <EmojiPicker
+                  onEmojiClick={handleEmojiSelect}
+                  width="100%"
+                  height={320}
+                  previewConfig={{ showPreview: false }}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+        <button type="submit" className="primary" disabled={disabled || uploading}>
+          Send
+        </button>
+      </div>
     </form>
   );
 };
@@ -146,11 +344,24 @@ const ChatLayout = ({ user, socket, onLogout }) => {
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [error, setError] = useState("");
   const [messageMeta, setMessageMeta] = useState({});
+  const [openActionMenuId, setOpenActionMenuId] = useState("");
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [globalSearchQuery, setGlobalSearchQuery] = useState("");
+  const [localSearchQuery, setLocalSearchQuery] = useState("");
+  const [showLocalSearch, setShowLocalSearch] = useState(false);
+  const [globalSearchResults, setGlobalSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
   const shouldAutoScrollRef = useRef(false);
   const bottomRef = useRef(null);
+  const searchTimerRef = useRef(null);
+  const localSearchInputRef = useRef(null);
 
   const scrollToBottom = useCallback((behavior = "smooth") => {
     bottomRef.current?.scrollIntoView({ behavior, block: "end" });
+  }, []);
+
+  const clearMessageActionState = useCallback(() => {
+    setOpenActionMenuId("");
   }, []);
 
   const addMessage = useCallback((message) => {
@@ -162,6 +373,41 @@ const ChatLayout = ({ user, socket, onLogout }) => {
       return [...prev, message];
     });
   }, []);
+
+  const syncCurrentConversationMeta = useCallback(
+    (conversationMessages) => {
+      const selectedId = normalizeId(selectedUser?._id);
+      if (!selectedId) return;
+      const lastMsg = conversationMessages[conversationMessages.length - 1];
+      setMessageMeta((prev) => ({
+        ...prev,
+        [selectedId]: {
+          ...prev[selectedId],
+          lastMessageTime: lastMsg?.createdAt || lastMsg?.timestamp || null,
+          unreadCount: 0,
+        },
+      }));
+    },
+    [selectedUser]
+  );
+
+  const removeMessageFromCurrentView = useCallback(
+    (messageId) => {
+      const targetId = normalizeId(messageId);
+      if (!targetId) return;
+
+      setMessages((prev) => {
+        const nextMessages = prev.filter((msg) => normalizeId(msg?._id) !== targetId);
+        syncCurrentConversationMeta(nextMessages);
+        return nextMessages;
+      });
+
+      if (normalizeId(replyingTo?._id) === targetId) {
+        setReplyingTo(null);
+      }
+    },
+    [replyingTo, syncCurrentConversationMeta]
+  );
 
   const loadUsers = useCallback(async () => {
     try {
@@ -179,32 +425,28 @@ const ChatLayout = ({ user, socket, onLogout }) => {
     loadUsers();
   }, [loadUsers]);
 
-  const loadMessages = useCallback(
-    async (partnerId) => {
-      setLoadingMessages(true);
-      setError("");
-      try {
-        const data = await messageApi.getMessages(partnerId);
-        setMessages(data);
-        const lastMsg = data[data.length - 1];
-        const partnerKey = normalizeId(partnerId);
-        setMessageMeta((prev) => ({
-          ...prev,
-          [partnerKey]: {
-            lastMessageTime:
-              lastMsg?.createdAt || lastMsg?.timestamp || prev[partnerKey]?.lastMessageTime,
-            unreadCount: 0,
-          },
-        }));
-        shouldAutoScrollRef.current = true;
-      } catch (err) {
-        setError(err?.message || "Failed to load messages");
-      } finally {
-        setLoadingMessages(false);
-      }
-    },
-    []
-  );
+  const loadMessages = useCallback(async (partnerId) => {
+    setLoadingMessages(true);
+    setError("");
+    try {
+      const data = await messageApi.getMessages(partnerId);
+      setMessages(data);
+      const lastMsg = data[data.length - 1];
+      const partnerKey = normalizeId(partnerId);
+      setMessageMeta((prev) => ({
+        ...prev,
+        [partnerKey]: {
+          lastMessageTime: lastMsg?.createdAt || lastMsg?.timestamp || prev[partnerKey]?.lastMessageTime,
+          unreadCount: 0,
+        },
+      }));
+      shouldAutoScrollRef.current = true;
+    } catch (err) {
+      setError(err?.message || "Failed to load messages");
+    } finally {
+      setLoadingMessages(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!selectedUser) return;
@@ -213,10 +455,17 @@ const ChatLayout = ({ user, socket, onLogout }) => {
 
   const handleSend = async ({ text, image }) => {
     if (!selectedUser) return;
+
     setSending(true);
+    setError("");
     try {
       const selectedId = normalizeId(selectedUser._id);
-      const newMessage = await messageApi.sendMessage(selectedId, { text, image });
+      const newMessage = await messageApi.sendMessage(selectedId, {
+        text,
+        image,
+        replyToMessageId: replyingTo ? normalizeId(replyingTo._id) : undefined,
+      });
+
       addMessage(newMessage);
       shouldAutoScrollRef.current = true;
       setMessageMeta((prev) => ({
@@ -226,11 +475,52 @@ const ChatLayout = ({ user, socket, onLogout }) => {
           unreadCount: prev[selectedId]?.unreadCount || 0,
         },
       }));
+      setReplyingTo(null);
+      clearMessageActionState();
     } catch (err) {
       setError(err?.message || "Failed to send message");
     } finally {
       setSending(false);
     }
+  };
+
+  const handleDeleteMessage = async (message, scope) => {
+    const messageId = normalizeId(message?._id);
+    if (!messageId) return;
+
+    setError("");
+    try {
+      await messageApi.deleteMessage(messageId, { scope });
+      removeMessageFromCurrentView(messageId);
+      clearMessageActionState();
+    } catch (err) {
+      setError(err?.message || "Failed to delete message");
+    }
+  };
+
+  const handleCopyMessage = async (message) => {
+    const contentToCopy = message?.text?.trim() || message?.image || "";
+    if (!contentToCopy) {
+      setError("Nothing to copy for this message");
+      return;
+    }
+
+    if (!navigator?.clipboard?.writeText) {
+      setError("Clipboard API is not available in this browser");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(contentToCopy);
+      clearMessageActionState();
+    } catch {
+      setError("Failed to copy message");
+    }
+  };
+
+  const handleReplyToMessage = (message) => {
+    setReplyingTo(message);
+    clearMessageActionState();
   };
 
   useEffect(() => {
@@ -245,14 +535,14 @@ const ChatLayout = ({ user, socket, onLogout }) => {
         selectedId &&
         ((senderId === selectedId && receiverId === myId) ||
           (senderId === myId && receiverId === selectedId));
+
       if (relevant) {
         addMessage(message);
         shouldAutoScrollRef.current = true;
         setMessageMeta((prev) => ({
           ...prev,
           [selectedId]: {
-            lastMessageTime:
-              message?.createdAt || message?.timestamp || prev[selectedId]?.lastMessageTime,
+            lastMessageTime: message?.createdAt || message?.timestamp || prev[selectedId]?.lastMessageTime,
             unreadCount: 0,
           },
         }));
@@ -264,8 +554,7 @@ const ChatLayout = ({ user, socket, onLogout }) => {
         setMessageMeta((prev) => ({
           ...prev,
           [otherId]: {
-            lastMessageTime:
-              message?.createdAt || message?.timestamp || prev[otherId]?.lastMessageTime,
+            lastMessageTime: message?.createdAt || message?.timestamp || prev[otherId]?.lastMessageTime,
             unreadCount: shouldCountUnread
               ? (prev[otherId]?.unreadCount || 0) + 1
               : prev[otherId]?.unreadCount || 0,
@@ -274,20 +563,32 @@ const ChatLayout = ({ user, socket, onLogout }) => {
       }
     };
 
+    const handleDeleted = (payload) => {
+      const eventScope = payload?.scope || "everyone";
+      const myId = normalizeId(user?._id);
+      const eventUserId = normalizeId(payload?.userId);
+      if (eventScope === "everyone" || (eventScope === "me" && eventUserId === myId)) {
+        removeMessageFromCurrentView(payload?.messageId);
+      }
+    };
+
     const handleOnline = (ids = []) =>
       setOnlineUsers(new Set(ids.map((id) => normalizeId(id))));
 
     socket.on("message:new", handleIncoming);
+    socket.on("message:deleted", handleDeleted);
     socket.on("users:online", handleOnline);
+
     if (!socket.connected) {
       socket.connect();
     }
 
     return () => {
       socket.off("message:new", handleIncoming);
+      socket.off("message:deleted", handleDeleted);
       socket.off("users:online", handleOnline);
     };
-  }, [socket, selectedUser, addMessage, user]);
+  }, [socket, selectedUser, addMessage, user, removeMessageFromCurrentView]);
 
   useEffect(() => {
     if (!selectedUser) return;
@@ -296,9 +597,21 @@ const ChatLayout = ({ user, socket, onLogout }) => {
     shouldAutoScrollRef.current = false;
   }, [messages, selectedUser, scrollToBottom]);
 
+  useEffect(() => {
+    if (!openActionMenuId) return;
+
+    const closeMenu = () => setOpenActionMenuId("");
+    window.addEventListener("click", closeMenu);
+    return () => window.removeEventListener("click", closeMenu);
+  }, [openActionMenuId]);
+
   const handleSelectUser = useCallback((nextUser) => {
     const nextId = normalizeId(nextUser?._id);
     setSelectedUser(nextUser);
+    setReplyingTo(null);
+    setOpenActionMenuId("");
+    setShowLocalSearch(false);
+    setLocalSearchQuery("");
     setMessageMeta((prev) => ({
       ...prev,
       [nextId]: {
@@ -314,6 +627,78 @@ const ChatLayout = ({ user, socket, onLogout }) => {
     return selectedUser.fullName;
   }, [selectedUser]);
 
+  const normalizedLocalSearchQuery = localSearchQuery.trim().toLowerCase();
+
+  const currentSearchMessages = useMemo(() => {
+    if (!normalizedLocalSearchQuery) {
+      return messages;
+    }
+    return messages.filter((msg) => {
+      const body = (msg?.text || "").toLowerCase();
+      const replyText = (msg?.replyTo?.text || "").toLowerCase();
+      return body.includes(normalizedLocalSearchQuery) || replyText.includes(normalizedLocalSearchQuery);
+    });
+  }, [messages, normalizedLocalSearchQuery]);
+
+  const usersById = useMemo(() => {
+    return users.reduce((acc, u) => {
+      acc[normalizeId(u._id)] = u;
+      return acc;
+    }, {});
+  }, [users]);
+
+  useEffect(() => {
+    const query = globalSearchQuery.trim();
+    if (!query) {
+      setSearchLoading(false);
+      setGlobalSearchResults([]);
+      return;
+    }
+
+    if (searchTimerRef.current) {
+      clearTimeout(searchTimerRef.current);
+    }
+
+    searchTimerRef.current = setTimeout(async () => {
+      setSearchLoading(true);
+      try {
+        const results = await messageApi.searchMessages({ query });
+        setGlobalSearchResults(results);
+      } catch (err) {
+        setError(err?.message || "Failed to search messages");
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 250);
+
+    return () => {
+      if (searchTimerRef.current) {
+        clearTimeout(searchTimerRef.current);
+      }
+    };
+  }, [globalSearchQuery]);
+
+  useEffect(() => {
+    if (!showLocalSearch) return;
+    localSearchInputRef.current?.focus();
+  }, [showLocalSearch]);
+
+  const handleOpenGlobalSearchResult = useCallback(
+    (result) => {
+      const conversationUserId = normalizeId(result?.conversationUserId);
+      const matchedUser = users.find((u) => normalizeId(u._id) === conversationUserId);
+      if (matchedUser) {
+        handleSelectUser(matchedUser);
+      }
+      const query = globalSearchQuery.trim();
+      setGlobalSearchQuery("");
+      setGlobalSearchResults([]);
+      setShowLocalSearch(true);
+      setLocalSearchQuery(query);
+    },
+    [users, handleSelectUser, globalSearchQuery]
+  );
+
   return (
     <div className="chat-shell">
       <Sidebar
@@ -324,6 +709,12 @@ const ChatLayout = ({ user, socket, onLogout }) => {
         selectedUserId={normalizeId(selectedUser?._id)}
         onSelect={handleSelectUser}
         online={onlineUsers}
+        globalSearchQuery={globalSearchQuery}
+        onGlobalSearchChange={setGlobalSearchQuery}
+        globalSearchResults={globalSearchResults}
+        globalSearchLoading={searchLoading}
+        onOpenGlobalResult={handleOpenGlobalSearchResult}
+        usersById={usersById}
       />
       <main className="chat-pane">
         <header className="chat-header">
@@ -339,19 +730,78 @@ const ChatLayout = ({ user, socket, onLogout }) => {
             )}
             <h2>{pageTitle}</h2>
           </div>
-          <button onClick={onLogout} className="ghost small">
-            Log out
-          </button>
+          <div className="chat-actions">
+            <button onClick={onLogout} className="ghost small">
+              Log out
+            </button>
+            {selectedUser && (
+              <button
+                type="button"
+                className={`local-search-trigger ${showLocalSearch ? "active" : ""}`}
+                onClick={() => {
+                  setShowLocalSearch((prev) => {
+                    const next = !prev;
+                    if (!next) {
+                      setLocalSearchQuery("");
+                    }
+                    return next;
+                  });
+                }}
+                title="Search in this chat"
+                aria-label="Search in this chat"
+              >
+                🔍
+              </button>
+            )}
+          </div>
         </header>
+        {showLocalSearch && (
+          <div className="chat-local-search">
+            <input
+              ref={localSearchInputRef}
+              type="text"
+              value={localSearchQuery}
+              onChange={(e) => setLocalSearchQuery(e.target.value)}
+              placeholder="Search within this chat"
+            />
+            <button
+              type="button"
+              className="chat-local-search-close"
+              onClick={() => {
+                setShowLocalSearch(false);
+                setLocalSearchQuery("");
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
         {error && <div className="error">{error}</div>}
         <div className="conversation">
           {loadingMessages ? (
             <div className="empty">Loading messages...</div>
           ) : (
-            <MessageList messages={messages} currentUser={user} bottomRef={bottomRef} />
+            <MessageList
+              messages={currentSearchMessages}
+              currentUser={user}
+              bottomRef={bottomRef}
+              openActionMenuId={openActionMenuId}
+              onToggleMenu={(messageId) =>
+                setOpenActionMenuId((prev) => (prev === messageId ? "" : messageId))
+              }
+              onReply={handleReplyToMessage}
+              onCopy={handleCopyMessage}
+              onDelete={handleDeleteMessage}
+            />
           )}
         </div>
-        <MessageInput onSend={handleSend} disabled={!selectedUser || sending} />
+        <MessageInput
+          onSend={handleSend}
+          disabled={!selectedUser || sending}
+          replyingTo={replyingTo}
+          currentUserId={user?._id}
+          onCancelReply={() => setReplyingTo(null)}
+        />
       </main>
     </div>
   );

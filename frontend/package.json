@@ -10,9 +10,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "socket.io-client": "^4.8.1",
+    "emoji-picker-react": "^4.18.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.21.0",
