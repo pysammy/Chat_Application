@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import EmojiPicker from "emoji-picker-react";
 import { messageApi } from "../api";
 
 const formatTime = (dateString) => {
@@ -158,6 +159,9 @@ const MessageInput = ({ onSend, disabled, replyingTo, currentUserId, onCancelRep
   const [text, setText] = useState("");
   const [imageData, setImageData] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const textInputRef = useRef(null);
+  const emojiPickerRef = useRef(null);
 
   const isReplyToMine = normalizeId(replyingTo?.senderId) === normalizeId(currentUserId);
 
@@ -167,6 +171,7 @@ const MessageInput = ({ onSend, disabled, replyingTo, currentUserId, onCancelRep
     await onSend({ text, image: imageData });
     setText("");
     setImageData("");
+    setShowEmojiPicker(false);
   };
 
   const handleFile = (e) => {
@@ -180,6 +185,34 @@ const MessageInput = ({ onSend, disabled, replyingTo, currentUserId, onCancelRep
     };
     reader.readAsDataURL(file);
   };
+
+  const handleEmojiSelect = (emojiData) => {
+    setText((prev) => `${prev}${emojiData?.emoji || ""}`);
+    textInputRef.current?.focus();
+  };
+
+  useEffect(() => {
+    if (!showEmojiPicker) return;
+
+    const handleOutsideClick = (event) => {
+      if (!emojiPickerRef.current?.contains(event.target)) {
+        setShowEmojiPicker(false);
+      }
+    };
+
+    const handleEscape = (event) => {
+      if (event.key === "Escape") {
+        setShowEmojiPicker(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handleOutsideClick);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("mousedown", handleOutsideClick);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [showEmojiPicker]);
 
   return (
     <form className="composer" onSubmit={handleSubmit}>
@@ -200,12 +233,38 @@ const MessageInput = ({ onSend, disabled, replyingTo, currentUserId, onCancelRep
           <input type="file" accept="image/*" onChange={handleFile} disabled={disabled} />
           <span>{uploading ? "..." : "📎"}</span>
         </label>
-        <input
-          placeholder="Write a message"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          disabled={disabled}
-        />
+        <div className="composer-input-wrap">
+          <input
+            type="text"
+            ref={textInputRef}
+            placeholder="Write a message"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            disabled={disabled}
+          />
+          <div className="emoji-picker-wrap" ref={emojiPickerRef}>
+            <button
+              type="button"
+              className="emoji-trigger icon-only"
+              title="Open emoji picker"
+              aria-label="Open emoji picker"
+              onClick={() => setShowEmojiPicker((prev) => !prev)}
+              disabled={disabled}
+            >
+              😊
+            </button>
+            {showEmojiPicker && (
+              <div className="emoji-panel">
+                <EmojiPicker
+                  onEmojiClick={handleEmojiSelect}
+                  width="100%"
+                  height={320}
+                  previewConfig={{ showPreview: false }}
+                />
+              </div>
+            )}
+          </div>
+        </div>
         <button type="submit" className="primary" disabled={disabled || uploading}>
           Send
         </button>
