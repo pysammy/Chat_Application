@@ -171,6 +171,17 @@ button {
   font-size: 0.95rem;
 }
 
+.sidebar-search {
+  margin-top: 12px;
+}
+
+.sidebar-search input {
+  width: 100%;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 0.9rem;
+}
+
 .user-list {
   margin-top: 16px;
   display: grid;
@@ -322,6 +333,58 @@ button {
   gap: 12px;
 }
 
+.chat-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.local-search-trigger {
+  border: 1px solid var(--border);
+  background: #fff;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  padding: 0;
+}
+
+.local-search-trigger.active {
+  border-color: #a5b4fc;
+  background: #eef2ff;
+}
+
+.chat-local-search {
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.chat-local-search input {
+  width: 100%;
+}
+
+.chat-local-search-close {
+  border: none;
+  background: #eef2ff;
+  color: #475569;
+  border-radius: 8px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
 .eyebrow {
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -334,6 +397,66 @@ button {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+.global-search-results {
+  padding: 16px 20px;
+  display: grid;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.global-search-results.compact {
+  max-height: 180px;
+  padding: 10px 0 0;
+}
+
+.global-result-row {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #fff;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+}
+
+.global-result-row.compact {
+  padding: 8px 10px;
+}
+
+.global-result-row:hover {
+  border-color: #c7d2fe;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+.global-result-main {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.global-result-name {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.global-result-text {
+  font-size: 0.82rem;
+  color: #475569;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.global-result-time {
+  font-size: 0.76rem;
+  color: #64748b;
+  flex-shrink: 0;
 }
 
 .messages {

@@ -25,12 +25,40 @@ const getMessagePreview = (message) => {
   return "Message";
 };
 
-const Sidebar = ({ users, selectedUserId, onSelect, online }) => (
+const Sidebar = ({
+  users,
+  selectedUserId,
+  onSelect,
+  online,
+  globalSearchQuery,
+  onGlobalSearchChange,
+  globalSearchResults,
+  globalSearchLoading,
+  onOpenGlobalResult,
+  usersById,
+}) => (
   <aside className="sidebar">
     <div className="sidebar-header">
       <h2>Chats</h2>
       <p>Select a person to start messaging.</p>
     </div>
+    <div className="sidebar-search">
+      <input
+        type="text"
+        value={globalSearchQuery}
+        onChange={(e) => onGlobalSearchChange(e.target.value)}
+        placeholder="Search all messages"
+      />
+    </div>
+    {globalSearchQuery.trim() && (
+      <GlobalSearchResults
+        results={globalSearchResults}
+        usersById={usersById}
+        loading={globalSearchLoading}
+        onOpenResult={onOpenGlobalResult}
+        compact
+      />
+    )}
     <div className="user-list">
       {users.map((u) => {
         const userId = normalizeId(u._id);
@@ -151,6 +179,40 @@ const MessageList = ({
         )}
         <div ref={bottomRef} />
       </div>
+    </div>
+  );
+};
+
+const GlobalSearchResults = ({ results, usersById, loading, onOpenResult, compact = false }) => {
+  if (loading) {
+    return <div className="empty">Searching messages...</div>;
+  }
+
+  if (results.length === 0) {
+    return <div className="empty">No matching messages found.</div>;
+  }
+
+  return (
+    <div className={`global-search-results ${compact ? "compact" : ""}`}>
+      {results.map((result) => {
+        const convoId = normalizeId(result.conversationUserId);
+        const user = usersById[convoId];
+        const name = user?.fullName || "Unknown user";
+        const preview = getMessagePreview(result);
+        return (
+          <button
+            key={normalizeId(result._id)}
+            className={`global-result-row ${compact ? "compact" : ""}`}
+            onClick={() => onOpenResult(result)}
+          >
+            <div className="global-result-main">
+              <span className="global-result-name">{name}</span>
+              <span className="global-result-text">{preview}</span>
+            </div>
+            <span className="global-result-time">{formatTime(result.createdAt)}</span>
+          </button>
+        );
+      })}
     </div>
   );
 };
@@ -284,8 +346,15 @@ const ChatLayout = ({ user, socket, onLogout }) => {
   const [messageMeta, setMessageMeta] = useState({});
   const [openActionMenuId, setOpenActionMenuId] = useState("");
   const [replyingTo, setReplyingTo] = useState(null);
+  const [globalSearchQuery, setGlobalSearchQuery] = useState("");
+  const [localSearchQuery, setLocalSearchQuery] = useState("");
+  const [showLocalSearch, setShowLocalSearch] = useState(false);
+  const [globalSearchResults, setGlobalSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
   const shouldAutoScrollRef = useRef(false);
   const bottomRef = useRef(null);
+  const searchTimerRef = useRef(null);
+  const localSearchInputRef = useRef(null);
 
   const scrollToBottom = useCallback((behavior = "smooth") => {
     bottomRef.current?.scrollIntoView({ behavior, block: "end" });
@@ -541,6 +610,8 @@ const ChatLayout = ({ user, socket, onLogout }) => {
     setSelectedUser(nextUser);
     setReplyingTo(null);
     setOpenActionMenuId("");
+    setShowLocalSearch(false);
+    setLocalSearchQuery("");
     setMessageMeta((prev) => ({
       ...prev,
       [nextId]: {
@@ -556,6 +627,78 @@ const ChatLayout = ({ user, socket, onLogout }) => {
     return selectedUser.fullName;
   }, [selectedUser]);
 
+  const normalizedLocalSearchQuery = localSearchQuery.trim().toLowerCase();
+
+  const currentSearchMessages = useMemo(() => {
+    if (!normalizedLocalSearchQuery) {
+      return messages;
+    }
+    return messages.filter((msg) => {
+      const body = (msg?.text || "").toLowerCase();
+      const replyText = (msg?.replyTo?.text || "").toLowerCase();
+      return body.includes(normalizedLocalSearchQuery) || replyText.includes(normalizedLocalSearchQuery);
+    });
+  }, [messages, normalizedLocalSearchQuery]);
+
+  const usersById = useMemo(() => {
+    return users.reduce((acc, u) => {
+      acc[normalizeId(u._id)] = u;
+      return acc;
+    }, {});
+  }, [users]);
+
+  useEffect(() => {
+    const query = globalSearchQuery.trim();
+    if (!query) {
+      setSearchLoading(false);
+      setGlobalSearchResults([]);
+      return;
+    }
+
+    if (searchTimerRef.current) {
+      clearTimeout(searchTimerRef.current);
+    }
+
+    searchTimerRef.current = setTimeout(async () => {
+      setSearchLoading(true);
+      try {
+        const results = await messageApi.searchMessages({ query });
+        setGlobalSearchResults(results);
+      } catch (err) {
+        setError(err?.message || "Failed to search messages");
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 250);
+
+    return () => {
+      if (searchTimerRef.current) {
+        clearTimeout(searchTimerRef.current);
+      }
+    };
+  }, [globalSearchQuery]);
+
+  useEffect(() => {
+    if (!showLocalSearch) return;
+    localSearchInputRef.current?.focus();
+  }, [showLocalSearch]);
+
+  const handleOpenGlobalSearchResult = useCallback(
+    (result) => {
+      const conversationUserId = normalizeId(result?.conversationUserId);
+      const matchedUser = users.find((u) => normalizeId(u._id) === conversationUserId);
+      if (matchedUser) {
+        handleSelectUser(matchedUser);
+      }
+      const query = globalSearchQuery.trim();
+      setGlobalSearchQuery("");
+      setGlobalSearchResults([]);
+      setShowLocalSearch(true);
+      setLocalSearchQuery(query);
+    },
+    [users, handleSelectUser, globalSearchQuery]
+  );
+
   return (
     <div className="chat-shell">
       <Sidebar
@@ -566,6 +709,12 @@ const ChatLayout = ({ user, socket, onLogout }) => {
         selectedUserId={normalizeId(selectedUser?._id)}
         onSelect={handleSelectUser}
         online={onlineUsers}
+        globalSearchQuery={globalSearchQuery}
+        onGlobalSearchChange={setGlobalSearchQuery}
+        globalSearchResults={globalSearchResults}
+        globalSearchLoading={searchLoading}
+        onOpenGlobalResult={handleOpenGlobalSearchResult}
+        usersById={usersById}
       />
       <main className="chat-pane">
         <header className="chat-header">
@@ -581,17 +730,59 @@ const ChatLayout = ({ user, socket, onLogout }) => {
             )}
             <h2>{pageTitle}</h2>
           </div>
-          <button onClick={onLogout} className="ghost small">
-            Log out
-          </button>
+          <div className="chat-actions">
+            <button onClick={onLogout} className="ghost small">
+              Log out
+            </button>
+            {selectedUser && (
+              <button
+                type="button"
+                className={`local-search-trigger ${showLocalSearch ? "active" : ""}`}
+                onClick={() => {
+                  setShowLocalSearch((prev) => {
+                    const next = !prev;
+                    if (!next) {
+                      setLocalSearchQuery("");
+                    }
+                    return next;
+                  });
+                }}
+                title="Search in this chat"
+                aria-label="Search in this chat"
+              >
+                🔍
+              </button>
+            )}
+          </div>
         </header>
+        {showLocalSearch && (
+          <div className="chat-local-search">
+            <input
+              ref={localSearchInputRef}
+              type="text"
+              value={localSearchQuery}
+              onChange={(e) => setLocalSearchQuery(e.target.value)}
+              placeholder="Search within this chat"
+            />
+            <button
+              type="button"
+              className="chat-local-search-close"
+              onClick={() => {
+                setShowLocalSearch(false);
+                setLocalSearchQuery("");
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
         {error && <div className="error">{error}</div>}
         <div className="conversation">
           {loadingMessages ? (
             <div className="empty">Loading messages...</div>
           ) : (
             <MessageList
-              messages={messages}
+              messages={currentSearchMessages}
               currentUser={user}
               bottomRef={bottomRef}
               openActionMenuId={openActionMenuId}

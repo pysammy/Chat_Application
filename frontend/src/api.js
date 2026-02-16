@@ -31,6 +31,13 @@ export const authApi = {
 export const messageApi = {
   getUsers: () => request("/message/users", { method: "GET" }),
   getMessages: (userId) => request(`/message/${userId}`, { method: "GET" }),
+  searchMessages: ({ query, partnerId } = {}) => {
+    const params = new URLSearchParams();
+    if (query) params.set("q", query);
+    if (partnerId) params.set("partnerId", partnerId);
+    const qs = params.toString();
+    return request(`/message/search${qs ? `?${qs}` : ""}`, { method: "GET" });
+  },
   sendMessage: (userId, payload) =>
     request(`/message/send/${userId}`, { method: "POST", body: JSON.stringify(payload) }),
   deleteMessage: (messageId, payload) =>

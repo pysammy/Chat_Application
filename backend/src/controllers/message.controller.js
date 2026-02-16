@@ -5,6 +5,7 @@ import { getIO, getReceiverSocketId } from "../lib/socket.js";
 import mongoose from "mongoose";
 
 const toId = (value) => String(value);
+const escapeRegex = (value = "") => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export const getUsersForSideBar = async (req, res, next) => {
   try {
@@ -36,6 +37,65 @@ export const getmessages = async (req, res, next) => {
     res.status(200).json(messages);
   } catch (error) {
     console.log("Error in getMessages controller: ", error.message);
+    next(error);
+  }
+};
+
+export const searchMessages = async (req, res, next) => {
+  try {
+    const myId = req.user._id;
+    const rawQuery = (req.query.q || "").trim();
+    const partnerId = (req.query.partnerId || "").trim();
+
+    if (!rawQuery) {
+      return res.status(200).json([]);
+    }
+
+    const baseFilter = {
+      $or: [{ senderId: myId }, { receiverId: myId }],
+      deletedFor: { $nin: [myId] },
+      text: { $regex: escapeRegex(rawQuery), $options: "i" },
+    };
+
+    if (partnerId) {
+      if (!mongoose.Types.ObjectId.isValid(partnerId)) {
+        return res.status(400).json({ message: "Invalid partner identifier" });
+      }
+      baseFilter.$and = [
+        {
+          $or: [
+            { senderId: myId, receiverId: partnerId },
+            { senderId: partnerId, receiverId: myId },
+          ],
+        },
+      ];
+    }
+
+    const results = await Message.find(baseFilter)
+      .sort({ createdAt: -1 })
+      .limit(100);
+
+    const payload = results.map((message) => {
+      const senderId = toId(message.senderId);
+      const receiverId = toId(message.receiverId);
+      const me = toId(myId);
+      const conversationUserId = senderId === me ? receiverId : senderId;
+
+      return {
+        _id: message._id,
+        senderId: message.senderId,
+        receiverId: message.receiverId,
+        conversationUserId,
+        text: message.text,
+        image: message.image,
+        replyTo: message.replyTo,
+        createdAt: message.createdAt,
+      };
+    });
+
+    res.status(200).json(payload);
+  } catch (error) {
+    console.log("Error in searchMessages controller: ", error.message);
     next(error);
   }
 };

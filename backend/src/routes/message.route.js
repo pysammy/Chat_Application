@@ -4,6 +4,7 @@ import {
   deleteMessage,
   getUsersForSideBar,
   getmessages,
+  searchMessages,
   sendMessage,
 } from "../controllers/message.controller.js";
 import { validateObjectIdParam, validateSendMessage } from "../middleware/validation.middleware.js";
@@ -12,6 +13,7 @@ const router = express.Router()
 
 
 router.get("/users", protectRoute, getUsersForSideBar);
+router.get("/search", protectRoute, searchMessages);
 router.get("/:id", protectRoute, validateObjectIdParam("id"), getmessages);
 
 router.post("/send/:id", protectRoute, validateObjectIdParam("id"), validateSendMessage, sendMessage);
