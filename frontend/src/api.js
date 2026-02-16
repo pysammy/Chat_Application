@@ -33,4 +33,5 @@ export const messageApi = {
   getMessages: (userId) => request(`/message/${userId}`, { method: "GET" }),
   sendMessage: (userId, payload) =>
     request(`/message/send/${userId}`, { method: "POST", body: JSON.stringify(payload) }),
+  deleteMessage: (messageId) => request(`/message/${messageId}`, { method: "DELETE" }),
 };

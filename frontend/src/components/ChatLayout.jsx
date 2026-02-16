@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { messageApi } from "../api";
 
 const formatTime = (dateString) => {
+  if (!dateString) return "";
   const date = new Date(dateString);
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 };
@@ -17,6 +18,12 @@ const normalizeId = (value) => {
   return String(value);
 };
 
+const getMessagePreview = (message) => {
+  if (message?.text?.trim()) return message.text.trim();
+  if (message?.image) return "Photo";
+  return "Message";
+};
+
 const Sidebar = ({ users, selectedUserId, onSelect, online }) => (
   <aside className="sidebar">
     <div className="sidebar-header">
@@ -29,9 +36,7 @@ const Sidebar = ({ users, selectedUserId, onSelect, online }) => (
         const isActive = selectedUserId === userId;
         const isOnline = online.has(userId);
         const initial = u.fullName?.[0]?.toUpperCase() || "?";
-        const timeStr = u.meta?.lastMessageTime
-          ? formatTime(u.meta.lastMessageTime)
-          : "";
+        const timeStr = u.meta?.lastMessageTime ? formatTime(u.meta.lastMessageTime) : "";
         const unread = u.meta?.unreadCount || 0;
         return (
           <button
@@ -65,9 +70,19 @@ const Sidebar = ({ users, selectedUserId, onSelect, online }) => (
   </aside>
 );
 
-const MessageList = ({ messages, currentUser, bottomRef }) => {
+const MessageList = ({
+  messages,
+  currentUser,
+  bottomRef,
+  openActionMenuId,
+  onToggleMenu,
+  onReply,
+  onDelete,
+  onCopy,
+}) => {
   const isEmpty = messages.length === 0;
   const currentUserId = normalizeId(currentUser?._id);
+
   return (
     <div className={`messages ${isEmpty ? "empty-state" : ""}`}>
       <div className="messages-inner">
@@ -75,10 +90,51 @@ const MessageList = ({ messages, currentUser, bottomRef }) => {
           <div className="empty centered">No messages yet. Say hello!</div>
         ) : (
           messages.map((msg) => {
+            const messageId = normalizeId(msg?._id);
             const isMine = normalizeId(msg.senderId) === currentUserId;
+            const isMenuOpen = openActionMenuId === messageId;
+            const replySenderId = normalizeId(msg?.replyTo?.senderId);
+            const replyLabel = replySenderId === currentUserId ? "You" : "Reply";
+
             return (
-              <div key={msg._id} className={`message ${isMine ? "mine" : ""}`}>
+              <div
+                key={messageId}
+                className={`message ${isMine ? "mine" : ""} ${isMenuOpen ? "menu-open" : ""}`}
+              >
+                <div className="message-actions" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    className="message-menu-trigger"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleMenu(messageId);
+                    }}
+                    aria-label="Message options"
+                  >
+                    ⋮
+                  </button>
+                  {isMenuOpen && (
+                    <div className="message-action-menu">
+                      <button type="button" onClick={() => onReply(msg)}>
+                        Reply
+                      </button>
+                      <button type="button" onClick={() => onCopy(msg)}>
+                        Copy
+                      </button>
+                      <button type="button" onClick={() => onDelete(msg)}>
+                        Delete
+                      </button>
+                    </div>
+                  )}
+                </div>
+
                 <div className="bubble">
+                  {msg?.replyTo?.messageId && (
+                    <div className="reply-preview">
+                      <span className="reply-author">{replyLabel}</span>
+                      <span className="reply-text">{getMessagePreview(msg.replyTo)}</span>
+                    </div>
+                  )}
                   {msg.text && <p>{msg.text}</p>}
                   {msg.image && <img src={msg.image} alt="attachment" />}
                 </div>
@@ -93,10 +149,12 @@ const MessageList = ({ messages, currentUser, bottomRef }) => {
   );
 };
 
-const MessageInput = ({ onSend, disabled }) => {
+const MessageInput = ({ onSend, disabled, replyingTo, currentUserId, onCancelReply }) => {
   const [text, setText] = useState("");
   const [imageData, setImageData] = useState("");
   const [uploading, setUploading] = useState(false);
+
+  const isReplyToMine = normalizeId(replyingTo?.senderId) === normalizeId(currentUserId);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -120,19 +178,33 @@ const MessageInput = ({ onSend, disabled }) => {
 
   return (
     <form className="composer" onSubmit={handleSubmit}>
-      <label className="file-input icon-only" title="Attach image">
-        <input type="file" accept="image/*" onChange={handleFile} disabled={disabled} />
-        <span>{uploading ? "..." : "📎"}</span>
-      </label>
-      <input
-        placeholder="Write a message"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        disabled={disabled}
-      />
-      <button type="submit" className="primary" disabled={disabled || uploading}>
-        Send
-      </button>
+      {replyingTo && (
+        <div className="composer-reply">
+          <div className="composer-reply-content">
+            <span className="composer-reply-label">Replying to {isReplyToMine ? "yourself" : "message"}</span>
+            <span className="composer-reply-text">{getMessagePreview(replyingTo)}</span>
+          </div>
+          <button type="button" className="composer-reply-cancel" onClick={onCancelReply}>
+            ✕
+          </button>
+        </div>
+      )}
+
+      <div className="composer-row">
+        <label className="file-input icon-only" title="Attach image">
+          <input type="file" accept="image/*" onChange={handleFile} disabled={disabled} />
+          <span>{uploading ? "..." : "📎"}</span>
+        </label>
+        <input
+          placeholder="Write a message"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          disabled={disabled}
+        />
+        <button type="submit" className="primary" disabled={disabled || uploading}>
+          Send
+        </button>
+      </div>
     </form>
   );
 };
@@ -146,11 +218,17 @@ const ChatLayout = ({ user, socket, onLogout }) => {
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [error, setError] = useState("");
   const [messageMeta, setMessageMeta] = useState({});
+  const [openActionMenuId, setOpenActionMenuId] = useState("");
+  const [replyingTo, setReplyingTo] = useState(null);
   const shouldAutoScrollRef = useRef(false);
   const bottomRef = useRef(null);
 
   const scrollToBottom = useCallback((behavior = "smooth") => {
     bottomRef.current?.scrollIntoView({ behavior, block: "end" });
+  }, []);
+
+  const clearMessageActionState = useCallback(() => {
+    setOpenActionMenuId("");
   }, []);
 
   const addMessage = useCallback((message) => {
@@ -162,6 +240,41 @@ const ChatLayout = ({ user, socket, onLogout }) => {
       return [...prev, message];
     });
   }, []);
+
+  const syncCurrentConversationMeta = useCallback(
+    (conversationMessages) => {
+      const selectedId = normalizeId(selectedUser?._id);
+      if (!selectedId) return;
+      const lastMsg = conversationMessages[conversationMessages.length - 1];
+      setMessageMeta((prev) => ({
+        ...prev,
+        [selectedId]: {
+          ...prev[selectedId],
+          lastMessageTime: lastMsg?.createdAt || lastMsg?.timestamp || null,
+          unreadCount: 0,
+        },
+      }));
+    },
+    [selectedUser]
+  );
+
+  const removeMessageFromCurrentView = useCallback(
+    (messageId) => {
+      const targetId = normalizeId(messageId);
+      if (!targetId) return;
+
+      setMessages((prev) => {
+        const nextMessages = prev.filter((msg) => normalizeId(msg?._id) !== targetId);
+        syncCurrentConversationMeta(nextMessages);
+        return nextMessages;
+      });
+
+      if (normalizeId(replyingTo?._id) === targetId) {
+        setReplyingTo(null);
+      }
+    },
+    [replyingTo, syncCurrentConversationMeta]
+  );
 
   const loadUsers = useCallback(async () => {
     try {
@@ -179,32 +292,28 @@ const ChatLayout = ({ user, socket, onLogout }) => {
     loadUsers();
   }, [loadUsers]);
 
-  const loadMessages = useCallback(
-    async (partnerId) => {
-      setLoadingMessages(true);
-      setError("");
-      try {
-        const data = await messageApi.getMessages(partnerId);
-        setMessages(data);
-        const lastMsg = data[data.length - 1];
-        const partnerKey = normalizeId(partnerId);
-        setMessageMeta((prev) => ({
-          ...prev,
-          [partnerKey]: {
-            lastMessageTime:
-              lastMsg?.createdAt || lastMsg?.timestamp || prev[partnerKey]?.lastMessageTime,
-            unreadCount: 0,
-          },
-        }));
-        shouldAutoScrollRef.current = true;
-      } catch (err) {
-        setError(err?.message || "Failed to load messages");
-      } finally {
-        setLoadingMessages(false);
-      }
-    },
-    []
-  );
+  const loadMessages = useCallback(async (partnerId) => {
+    setLoadingMessages(true);
+    setError("");
+    try {
+      const data = await messageApi.getMessages(partnerId);
+      setMessages(data);
+      const lastMsg = data[data.length - 1];
+      const partnerKey = normalizeId(partnerId);
+      setMessageMeta((prev) => ({
+        ...prev,
+        [partnerKey]: {
+          lastMessageTime: lastMsg?.createdAt || lastMsg?.timestamp || prev[partnerKey]?.lastMessageTime,
+          unreadCount: 0,
+        },
+      }));
+      shouldAutoScrollRef.current = true;
+    } catch (err) {
+      setError(err?.message || "Failed to load messages");
+    } finally {
+      setLoadingMessages(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!selectedUser) return;
@@ -213,10 +322,17 @@ const ChatLayout = ({ user, socket, onLogout }) => {
 
   const handleSend = async ({ text, image }) => {
     if (!selectedUser) return;
+
     setSending(true);
+    setError("");
     try {
       const selectedId = normalizeId(selectedUser._id);
-      const newMessage = await messageApi.sendMessage(selectedId, { text, image });
+      const newMessage = await messageApi.sendMessage(selectedId, {
+        text,
+        image,
+        replyToMessageId: replyingTo ? normalizeId(replyingTo._id) : undefined,
+      });
+
       addMessage(newMessage);
       shouldAutoScrollRef.current = true;
       setMessageMeta((prev) => ({
@@ -226,11 +342,52 @@ const ChatLayout = ({ user, socket, onLogout }) => {
           unreadCount: prev[selectedId]?.unreadCount || 0,
         },
       }));
+      setReplyingTo(null);
+      clearMessageActionState();
     } catch (err) {
       setError(err?.message || "Failed to send message");
     } finally {
       setSending(false);
     }
+  };
+
+  const handleDeleteMessage = async (message) => {
+    const messageId = normalizeId(message?._id);
+    if (!messageId) return;
+
+    setError("");
+    try {
+      await messageApi.deleteMessage(messageId);
+      removeMessageFromCurrentView(messageId);
+      clearMessageActionState();
+    } catch (err) {
+      setError(err?.message || "Failed to delete message");
+    }
+  };
+
+  const handleCopyMessage = async (message) => {
+    const contentToCopy = message?.text?.trim() || message?.image || "";
+    if (!contentToCopy) {
+      setError("Nothing to copy for this message");
+      return;
+    }
+
+    if (!navigator?.clipboard?.writeText) {
+      setError("Clipboard API is not available in this browser");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(contentToCopy);
+      clearMessageActionState();
+    } catch {
+      setError("Failed to copy message");
+    }
+  };
+
+  const handleReplyToMessage = (message) => {
+    setReplyingTo(message);
+    clearMessageActionState();
   };
 
   useEffect(() => {
@@ -245,14 +402,14 @@ const ChatLayout = ({ user, socket, onLogout }) => {
         selectedId &&
         ((senderId === selectedId && receiverId === myId) ||
           (senderId === myId && receiverId === selectedId));
+
       if (relevant) {
         addMessage(message);
         shouldAutoScrollRef.current = true;
         setMessageMeta((prev) => ({
           ...prev,
           [selectedId]: {
-            lastMessageTime:
-              message?.createdAt || message?.timestamp || prev[selectedId]?.lastMessageTime,
+            lastMessageTime: message?.createdAt || message?.timestamp || prev[selectedId]?.lastMessageTime,
             unreadCount: 0,
           },
         }));
@@ -264,8 +421,7 @@ const ChatLayout = ({ user, socket, onLogout }) => {
         setMessageMeta((prev) => ({
           ...prev,
           [otherId]: {
-            lastMessageTime:
-              message?.createdAt || message?.timestamp || prev[otherId]?.lastMessageTime,
+            lastMessageTime: message?.createdAt || message?.timestamp || prev[otherId]?.lastMessageTime,
             unreadCount: shouldCountUnread
               ? (prev[otherId]?.unreadCount || 0) + 1
               : prev[otherId]?.unreadCount || 0,
@@ -274,20 +430,27 @@ const ChatLayout = ({ user, socket, onLogout }) => {
       }
     };
 
+    const handleDeleted = (payload) => {
+      removeMessageFromCurrentView(payload?.messageId);
+    };
+
     const handleOnline = (ids = []) =>
       setOnlineUsers(new Set(ids.map((id) => normalizeId(id))));
 
     socket.on("message:new", handleIncoming);
+    socket.on("message:deleted", handleDeleted);
     socket.on("users:online", handleOnline);
+
     if (!socket.connected) {
       socket.connect();
     }
 
     return () => {
       socket.off("message:new", handleIncoming);
+      socket.off("message:deleted", handleDeleted);
       socket.off("users:online", handleOnline);
     };
-  }, [socket, selectedUser, addMessage, user]);
+  }, [socket, selectedUser, addMessage, user, removeMessageFromCurrentView]);
 
   useEffect(() => {
     if (!selectedUser) return;
@@ -296,9 +459,19 @@ const ChatLayout = ({ user, socket, onLogout }) => {
     shouldAutoScrollRef.current = false;
   }, [messages, selectedUser, scrollToBottom]);
 
+  useEffect(() => {
+    if (!openActionMenuId) return;
+
+    const closeMenu = () => setOpenActionMenuId("");
+    window.addEventListener("click", closeMenu);
+    return () => window.removeEventListener("click", closeMenu);
+  }, [openActionMenuId]);
+
   const handleSelectUser = useCallback((nextUser) => {
     const nextId = normalizeId(nextUser?._id);
     setSelectedUser(nextUser);
+    setReplyingTo(null);
+    setOpenActionMenuId("");
     setMessageMeta((prev) => ({
       ...prev,
       [nextId]: {
@@ -348,10 +521,27 @@ const ChatLayout = ({ user, socket, onLogout }) => {
           {loadingMessages ? (
             <div className="empty">Loading messages...</div>
           ) : (
-            <MessageList messages={messages} currentUser={user} bottomRef={bottomRef} />
+            <MessageList
+              messages={messages}
+              currentUser={user}
+              bottomRef={bottomRef}
+              openActionMenuId={openActionMenuId}
+              onToggleMenu={(messageId) =>
+                setOpenActionMenuId((prev) => (prev === messageId ? "" : messageId))
+              }
+              onReply={handleReplyToMessage}
+              onCopy={handleCopyMessage}
+              onDelete={handleDeleteMessage}
+            />
           )}
         </div>
-        <MessageInput onSend={handleSend} disabled={!selectedUser || sending} />
+        <MessageInput
+          onSend={handleSend}
+          disabled={!selectedUser || sending}
+          replyingTo={replyingTo}
+          currentUserId={user?._id}
+          onCancelReply={() => setReplyingTo(null)}
+        />
       </main>
     </div>
   );
