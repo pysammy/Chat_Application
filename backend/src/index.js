@@ -33,7 +33,16 @@ app.use(errorHandler);
 const server = http.createServer(app);
 initSocket(server);
 
-server.listen(PORT, () => {
-  console.log("server is running on PORT:" + PORT);
-  connectDB();
-});
+const startServer = async () => {
+  try {
+    await connectDB();
+    server.listen(PORT, () => {
+      console.log("server is running on PORT:" + PORT);
+    });
+  } catch (error) {
+    console.error("Server startup failed. Exiting process.");
+    process.exit(1);
+  }
+};
+
+startServer();
