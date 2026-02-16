@@ -30,6 +30,7 @@ export const getmessages = async (req, res, next) => {
         { senderId: myId, receiverId: userToChatId },
         { senderId: userToChatId, receiverId: myId },
       ],
+      deletedFor: { $nin: [myId] },
     }).sort({ createdAt: 1 });
 
     res.status(200).json(messages);
@@ -120,6 +121,7 @@ export const deleteMessage = async (req, res, next) => {
   try {
     const { id: messageId } = req.params;
     const requesterId = toId(req.user._id);
+    const scope = req.body?.scope === "everyone" ? "everyone" : "me";
 
     const existingMessage = await Message.findById(messageId);
     if (!existingMessage) {
@@ -133,22 +135,43 @@ export const deleteMessage = async (req, res, next) => {
       return res.status(403).json({ message: "Forbidden" });
     }
 
-    await Message.findByIdAndDelete(messageId);
-
     const io = getIO();
-    if (io) {
-      const senderSocketId = getReceiverSocketId(senderId);
-      if (senderSocketId) {
-        io.to(senderSocketId).emit("message:deleted", { messageId });
+    if (scope === "everyone") {
+      if (requesterId !== senderId) {
+        return res.status(403).json({ message: "Only the sender can delete for everyone" });
       }
 
-      const receiverSocketId = getReceiverSocketId(receiverId);
-      if (receiverSocketId) {
-        io.to(receiverSocketId).emit("message:deleted", { messageId });
+      await Message.findByIdAndDelete(messageId);
+
+      if (io) {
+        const senderSocketId = getReceiverSocketId(senderId);
+        if (senderSocketId) {
+          io.to(senderSocketId).emit("message:deleted", { messageId, scope: "everyone" });
+        }
+
+        const receiverSocketId = getReceiverSocketId(receiverId);
+        if (receiverSocketId) {
+          io.to(receiverSocketId).emit("message:deleted", { messageId, scope: "everyone" });
+        }
+      }
+    } else {
+      await Message.findByIdAndUpdate(messageId, {
+        $addToSet: { deletedFor: req.user._id },
+      });
+
+      if (io) {
+        const requesterSocketId = getReceiverSocketId(requesterId);
+        if (requesterSocketId) {
+          io.to(requesterSocketId).emit("message:deleted", {
+            messageId,
+            scope: "me",
+            userId: requesterId,
+          });
+        }
       }
     }
 
-    res.status(200).json({ message: "Message deleted", messageId });
+    res.status(200).json({ message: "Message deleted", messageId, scope });
   } catch (error) {
     console.log("Error in deleteMessage controller: ", error.message);
     next(error);

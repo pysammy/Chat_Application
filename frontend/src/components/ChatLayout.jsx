@@ -121,8 +121,13 @@ const MessageList = ({
                       <button type="button" onClick={() => onCopy(msg)}>
                         Copy
                       </button>
-                      <button type="button" onClick={() => onDelete(msg)}>
-                        Delete
+                      {isMine && (
+                        <button type="button" onClick={() => onDelete(msg, "everyone")}>
+                          Delete for everyone
+                        </button>
+                      )}
+                      <button type="button" onClick={() => onDelete(msg, "me")}>
+                        Delete for me
                       </button>
                     </div>
                   )}
@@ -351,13 +356,13 @@ const ChatLayout = ({ user, socket, onLogout }) => {
     }
   };
 
-  const handleDeleteMessage = async (message) => {
+  const handleDeleteMessage = async (message, scope) => {
     const messageId = normalizeId(message?._id);
     if (!messageId) return;
 
     setError("");
     try {
-      await messageApi.deleteMessage(messageId);
+      await messageApi.deleteMessage(messageId, { scope });
       removeMessageFromCurrentView(messageId);
       clearMessageActionState();
     } catch (err) {
@@ -431,7 +436,12 @@ const ChatLayout = ({ user, socket, onLogout }) => {
     };
 
     const handleDeleted = (payload) => {
-      removeMessageFromCurrentView(payload?.messageId);
+      const eventScope = payload?.scope || "everyone";
+      const myId = normalizeId(user?._id);
+      const eventUserId = normalizeId(payload?.userId);
+      if (eventScope === "everyone" || (eventScope === "me" && eventUserId === myId)) {
+        removeMessageFromCurrentView(payload?.messageId);
+      }
     };
 
     const handleOnline = (ids = []) =>
