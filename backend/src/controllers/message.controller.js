@@ -42,6 +42,11 @@ export const sendMessage = async (req, res, next) => {
     const { id: receiverId } = req.params;
     const senderId = req.user._id;
 
+    const receiverExists = await User.exists({ _id: receiverId });
+    if (!receiverExists) {
+      return res.status(404).json({ message: "Receiver not found" });
+    }
+
     let imageUrl;
     if (image) {
       const uploadResponse = await cloudinary.uploader.upload(image);
